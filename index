@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>نظام دخول الدعوات</title>
+<script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+<script>
+  if (typeof Html5Qrcode === 'undefined') {
+    var s = document.createElement('script');
+    s.src = 'https://cdn.jsdelivr.net/npm/html5-qrcode@2.3.8/html5-qrcode.min.js';
+    document.head.appendChild(s);
+  }
+</script>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Cairo:wght@700;900&display=swap');
+*{margin:0;padding:0;box-sizing:border-box;font-family:'Cairo',sans-serif;}
+body{background:linear-gradient(135deg,#0f0c29,#302b63,#24243e);color:#fff;min-height:100vh;display:flex;flex-direction:column;align-items:center;padding:20px;text-align:center;}
+.org-badge{background:linear-gradient(90deg,#e94560,#ff6b6b);padding:8px 24px;border-radius:30px;font-size:14px;margin:10px 0;}
+h1{font-size:26px;margin-bottom:6px;background:linear-gradient(to left,#fff,#e94560);-webkit-background-clip:text;-webkit-text-fill-color:transparent;}
+.subtitle{color:#ccc;font-size:15px;margin-bottom:16px;}
+#scanArea{width:100%;max-width:500px;display:flex;flex-direction:column;align-items:center;}
+.reader-wrap{position:relative;width:100%;}
+#reader{width:100%;min-height:320px;border-radius:20px;overflow:hidden;border:3px solid #e94560;background:#000;}
+#waiting{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;color:#aaa;font-size:17px;line-height:2;padding:20px;background:rgba(0,0,0,0.7);z-index:5;}
+#result{margin-top:18px;padding:24px;border-radius:16px;width:100%;font-size:24px;font-weight:900;min-height:90px;display:none;align-items:center;justify-content:center;}
+#result.show{display:flex;}
+#result.accepted{background:linear-gradient(135deg,#00b894,#55efc4);}
+#result.rejected{background:linear-gradient(135deg,#d63031,#ff7675);}
+#errorBox{display:none;margin-top:15px;background:#3d1420;border:2px solid #d63031;color:#ffb8b8;padding:18px;border-radius:14px;width:100%;font-size:16px;line-height:1.9;}
+#errorBox button{margin-top:12px;background:#d63031;color:#fff;border:none;padding:12px 28px;border-radius:10px;font-family:'Cairo';font-size:17px;font-weight:700;cursor:pointer;}
+#manualBox{margin-top:16px;display:flex;gap:8px;width:100%;}
+#manualCode{flex:1;padding:12px;border-radius:10px;border:1px solid #555;background:rgba(255,255,255,0.08);color:#fff;font-family:'Cairo';font-size:16px;text-align:center;}
+#manualBox button{background:#e94560;color:#fff;border:none;padding:12px 22px;border-radius:10px;font-family:'Cairo';font-weight:700;font-size:16px;cursor:pointer;}
+.status-tag{margin-top:16px;background:rgba(255,255,255,0.06);padding:10px 22px;border-radius:12px;font-size:14px;color:#aaa;}
+.tag-live{display:inline-block;width:9px;height:9px;background:#00b894;border-radius:50%;margin-left:8px;animation:pulse 1.5s infinite;}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:0.3}}
+</style>
+</head>
+<body>
+
+<div class="org-badge">جهاز المنظم</div>
+<h1>🎫 نظام الدخول الذكي</h1>
+<p class="subtitle">وجّه الكاميرا إلى كود الدعوة للتحقق الفوري</p>
+
+<div id="scanArea">
+  <div class="reader-wrap">
+    <div id="reader"></div>
+    <div id="waiting">📷 جاري طلب إذن الكاميرا...<br>اضغط <b style="color:#55efc4;">سماح / Allow</b></div>
+  </div>
+  <div id="errorBox"></div>
+  <div id="result"></div>
+  <div id="manualBox">
+    <input id="manualCode" placeholder="أو اكتب الكود للتجربة (مثال: EV-1234)">
+    <button onclick="manualTest()">فحص</button>
+  </div>
+  <div class="status-tag"><span class="tag-live"></span> متصل مباشرة بـ Google Sheets — التحديث فوري</div>
+</div>
+
+<script>
+// ⚠️⚠️ ضع رابط /exec الخاص بك هنا بين علامتي التنصيص ⚠️⚠️
+const API_URL = 'ضع_رابط_EXEC_هنا';
+
+let html5QrCode=null, scanning=false, cameraActive=false, audioCtx=null;
+
+window.addEventListener('load', ()=> setTimeout(startCamera, 300));
+
+document.addEventListener('click', function unlockAudio(){
+  try{
+    if(!audioCtx) audioCtx = new (window.AudioContext||window.webkitAudioContext)();
+    if(audioCtx.state==='suspended') audioCtx.resume();
+  }catch(e){}
+  document.removeEventListener('click', unlockAudio);
+});
+
+function hideWaiting(){ var w=document.getElementById('waiting'); if(w) w.style.display='none'; }
+function showError(msg){
+  hideWaiting();
+  const eb=document.getElementById('errorBox');
+  eb.style.display='block';
+  eb.innerHTML='⚠️ '+msg+'<br><button onclick="retryCamera()">🔄 إعادة المحاولة</button>';
+}
+function hideError(){ document.getElementById('errorBox').style.display='none'; }
+function retryCamera(){ hideError(); cameraActive=false; startCamera(); }
+
+function startCamera(){
+  if(cameraActive){ scanning=true; return; }
+  if(typeof Html5Qrcode==='undefined'){ showError('مكتبة المسح لم تُحمّل — تحقق من الإنترنت'); return; }
+  if(!html5QrCode) html5QrCode=new Html5Qrcode("reader");
+  html5QrCode.start(
+    {facingMode:"environment"},
+    {fps:10,qrbox:{width:250,height:250}},
+    onScanSuccess, ()=>{}
+  ).then(()=>{ cameraActive=true; scanning=true; hideWaiting(); hideError(); })
+   .catch(err=>{ cameraActive=false; showError('تعذر تشغيل الكاميرا: '+err+'<br>اضغط 🔒 بجانب الرابط ← الكاميرا ← سماح'); });
+}
+
+function stopCamera(cb){
+  if(cameraActive && html5QrCode){
+    html5QrCode.stop().then(()=>{cameraActive=false;cb();}).catch(()=>{cameraActive=false;cb();});
+  } else cb();
+}
+
+function onScanSuccess(code){ handleCode(code); }
+function manualTest(){
+  const v=document.getElementById('manualCode').value.trim();
+  if(v){ document.getElementById('manualCode').value=''; handleCode(v); }
+}
+
+function handleCode(code){
+  if(!scanning) return;
+  scanning=false;
+  stopCamera(()=>apiCheck(code).then(showResult));
+}
+
+function apiCheck(code){
+  const url = API_URL + '?action=check&code=' + encodeURIComponent(code);
+  return fetch(url)
+    .then(r=>r.json())
+    .catch(()=>new Promise(resolve=>{
+      // احتياطي JSONP إذا فشل الاتصال المباشر
+      const cb='cb_'+Date.now();
+      window[cb]=d=>{resolve(d);delete window[cb];s.remove();};
+      const s=document.createElement('script');
+      s.src=url+'&callback='+cb;
+      document.body.appendChild(s);
+    }));
+}
+
+function showResult(res){
+  const box=document.getElementById('result');
+  box.className='show '+(res.status==='accepted'?'accepted':'rejected');
+  box.innerHTML=res.msg;
+  playSound(res.status);
+  setTimeout(()=>{ box.className=''; box.innerHTML=''; startCamera(); },2200);
+}
+
+function playSound(type){
+  try{
+    if(!audioCtx) audioCtx=new (window.AudioContext||window.webkitAudioContext)();
+    if(audioCtx.state==='suspended') audioCtx.resume();
+    const ctx=audioCtx;
+    if(type==='accepted'){
+      const o=ctx.createOscillator(),g=ctx.createGain();
+      o.type='sine'; o.frequency.setValueAtTime(880,ctx.currentTime);
+      g.gain.setValueAtTime(0.15,ctx.currentTime); g.gain.exponentialRampToValueAtTime(0.01,ctx.currentTime+0.5);
+      o.connect(g);g.connect(ctx.destination);o.start();o.stop(ctx.currentTime+0.5);
+    }else{
+      [220,180].forEach((f,i)=>{
+        const o=ctx.createOscillator(),g=ctx.createGain();
+        o.type='triangle'; o.frequency.setValueAtTime(f,ctx.currentTime+i*0.12);
+        g.gain.setValueAtTime(0.12,ctx.currentTime+i*0.12); g.gain.exponentialRampToValueAtTime(0.01,ctx.currentTime+i*0.12+0.35);
+        o.connect(g);g.connect(ctx.destination);o.start();o.stop(ctx.currentTime+i*0.12+0.35);
+      });
+    }
+  }catch(e){}
+}
+</script>
+</body>
+</html>
