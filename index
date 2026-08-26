@@ -59,7 +59,7 @@ h1{font-size:26px;margin-bottom:6px;background:linear-gradient(to left,#fff,#e94
 
 <script>
 // ⚠️⚠️ ضع رابط /exec الخاص بك هنا بين علامتي التنصيص ⚠️⚠️
-const API_URL = 'ضع_رابط_EXEC_هنا';
+const API_URL = 'https://script.google.com/macros/s/AKfycbx91gVmQMnRrtWSTfbYQokbccZmEUojqVL5ls_6R4cBZ4mbjlJE9ghJ7648RJnmtgE9/exec';
 
 let html5QrCode=null, scanning=false, cameraActive=false, audioCtx=null;
 
